@@ -3,7 +3,7 @@
 all: imgseq2stl
 
 clean:
-	rm *.o
+	rm -f *.o
 
 distclean: clean
-	rm imgseq2stl
+	rm -f imgseq2stl

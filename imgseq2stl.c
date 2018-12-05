@@ -36,7 +36,7 @@ struct layer {
 /* all the layers */
 struct object {
 	size_t size; /* how many layers are alloc'ed for us */
-	struct layer* layers;
+	struct layer *layers[];
 };
 
 /* pack a point into point_t format */
@@ -66,6 +66,27 @@ struct layer *layer_resize(struct layer* layer, int numtriangles)
 	layer->bytes = newsize;
 }
 
+/* resize the object structure, return NULL on error */
+struct object *object_resize(struct object *object, int numlayers)
+{
+	int newsize = 0;
+
+	if (NULL == object) {
+		/* allocate size info and fill it */
+		object = malloc(sizeof(struct object));
+		object->size = 0;
+	}
+	newsize = sizeof(struct object) + numlayers * sizeof(struct layer *);
+	object = realloc(object, newsize);
+	if (object->size < numlayers) {
+		/* need to initialise to new ones */
+		memset(&object->layers[object->size], 0, (numlayers - object->size));
+	}
+	object->size = numlayers;
+}
+
+/* dump all triangles as ASCII STL */
+//FIXME: use file handle, later use binary format
 void dumptriangles(struct triangle *triangles, size_t size)
 {
 	int i;
@@ -108,10 +129,12 @@ void dumptriangles(struct triangle *triangles, size_t size)
 int main(char *argv, int argc)
 {
 	struct layer *layer = NULL;
-	struct object *objects = NULL;
+	struct object *object = NULL;
 	int i;
 
+	object = object_resize(object, 10);
 	layer = layer_resize(layer, 100);
+	object->layers[0] = layer;
 	i = 0;
 	/* front side */
 	layer->triangles[i].a = packpoint(0, 0, 0);
