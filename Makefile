@@ -1,5 +1,7 @@
 # simple Makefile, all done by implicit rules
 
+CFLAGS+=-Wall -O2
+
 all: imgseq2stl
 
 clean:
