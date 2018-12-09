@@ -2,6 +2,12 @@
 
 /* coordinates used: x to the right, y to the back, z to the top */
 
+//FIXME
+// add command line parameters
+// add scaling of output
+
+#include <vips/vips.h>
+
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -19,6 +25,7 @@ typedef enum {
 
 typedef uint64_t point_t; /* 20 bits x, 20 bits y, 20 bits z */
 
+/* data for one triangle */
 struct triangle {
 	normals_t normal;
 	point_t a;
@@ -26,18 +33,12 @@ struct triangle {
 	point_t c;
 };
 
-/* one layer */
-struct layer {
+/* out object */
+struct object {
 	size_t size; /* how many triangles are alloc'ed for us */
 	size_t bytes; /* size in bytes alloc'ed for us */
 	size_t free; /* first unused triangle */
 	struct triangle triangles[];
-};
-
-/* all the layers */
-struct object {
-	size_t size; /* how many layers are alloc'ed for us */
-	struct layer *layers[];
 };
 
 /* pack a point into point_t format */
@@ -46,184 +47,381 @@ point_t packpoint(int x, int y, int z)
 	return ((uint64_t) x) | (((uint64_t) y) << 20) | (((uint64_t) z) << 40);
 }
 
-/* resize a layer data structure, return NULL on error */
-struct layer *layer_resize(struct layer *layer, int numtriangles)
-{
-	int newsize = 0;
-
-if (layer) fprintf(stderr, "layer_resize %x, %lu to %d\n", layer, layer->size, numtriangles);
-else fprintf(stderr, "layer_resize init to %d\n", numtriangles);
-
-	if (NULL == layer) {
-		/* allocate size info and fill it */
-		layer = malloc(sizeof(struct layer));
-		layer->bytes = sizeof(struct layer);
-		layer->size = 0;
-		layer->free = 0;
-	}
-	newsize = sizeof(struct layer) + numtriangles * sizeof(struct triangle);
-	layer = realloc(layer, newsize);
-	if (layer->size < numtriangles) {
-		/* need to initialise the new ones */
-		memset(&layer->triangles[layer->size], 0xff, (numtriangles - layer->size) * sizeof(struct triangle));
-	}
-	layer->size = numtriangles;
-	layer->bytes = newsize;
-	return layer;
-}
-
-/* resize the object structure, return NULL on error */
-struct object *object_resize(struct object *object, int numlayers)
+/* resize a data structure, return NULL on error */
+struct object *resize(struct object *object, int numtriangles)
 {
 	int newsize = 0;
 
 	if (NULL == object) {
 		/* allocate size info and fill it */
 		object = malloc(sizeof(struct object));
+		object->bytes = sizeof(struct object);
 		object->size = 0;
+		object->free = 0;
 	}
-	newsize = sizeof(struct object) + numlayers * sizeof(struct layer *);
+	newsize = sizeof(struct object) + numtriangles * sizeof(struct triangle);
 	object = realloc(object, newsize);
-	if (object->size < numlayers) {
-		/* need to initialise to new ones */
-		memset(&object->layers[object->size], 0, (numlayers - object->size));
+	if (object->size < numtriangles) {
+		/* need to initialise the new ones */
+		memset(&object->triangles[object->size], 0xff, (numtriangles - object->size) * sizeof(struct triangle));
 	}
-	object->size = numlayers;
+	object->size = numtriangles;
+	object->bytes = newsize;
 	return object;
 }
 
-/* add a voxel at position (x,y,z) into layer layer, expand as necessary */
-struct layer *addvoxel(struct layer *layer, int x, int y, int z)
+/* add bottom surface */
+struct object *addbottom(struct object *object, VipsImage *image, int z)
 {
-//fprintf(stderr, "addvoxel %x @(%d,%d,%d) %lu used\n", layer, x, y, z, layer->free);
-	/* double size if too small */
-	if ((layer->free + 12) >= layer->size) layer = layer_resize(layer, layer->size * 2);
-	/* front side */
-	layer->triangles[layer->free].a = packpoint(x,   y,   z);
-	layer->triangles[layer->free].b = packpoint(x+1, y,   z);
-	layer->triangles[layer->free].c = packpoint(x,   y,   z+1);
-	layer->triangles[layer->free++].normal = nrm_front;
-	layer->triangles[layer->free].a = packpoint(x,   y,   z+1);
-	layer->triangles[layer->free].b = packpoint(x+1, y,   z);
-	layer->triangles[layer->free].c = packpoint(x+1, y,   z+1);
-	layer->triangles[layer->free++].normal = nrm_front;
-	/* back side */
-	layer->triangles[layer->free].a = packpoint(x,   y+1, z);
-	layer->triangles[layer->free].b = packpoint(x,   y+1, z+1);
-	layer->triangles[layer->free].c = packpoint(x+1, y+1, z);
-	layer->triangles[layer->free++].normal = nrm_back;
-	layer->triangles[layer->free].a = packpoint(x,   y+1, z+1);
-	layer->triangles[layer->free].b = packpoint(x+1, y+1, z+1);
-	layer->triangles[layer->free].c = packpoint(x+1, y+1, z);
-	layer->triangles[layer->free++].normal = nrm_back;
-	/* left side */
-	layer->triangles[layer->free].a = packpoint(x,   y,   z);
-	layer->triangles[layer->free].b = packpoint(x,   y,   z+1);
-	layer->triangles[layer->free].c = packpoint(x,   y+1, z);
-	layer->triangles[layer->free++].normal = nrm_left;
-	layer->triangles[layer->free].a = packpoint(x,   y,   z+1);
-	layer->triangles[layer->free].b = packpoint(x,   y+1, z+1);
-	layer->triangles[layer->free].c = packpoint(x,   y+1, z);
-	layer->triangles[layer->free++].normal = nrm_left;
-	/* right side */
-	layer->triangles[layer->free].a = packpoint(x+1, y,   z);
-	layer->triangles[layer->free].b = packpoint(x+1, y+1, z);
-	layer->triangles[layer->free].c = packpoint(x+1, y,   z+1);
-	layer->triangles[layer->free++].normal = nrm_right;
-	layer->triangles[layer->free].a = packpoint(x+1, y,   z+1);
-	layer->triangles[layer->free].b = packpoint(x+1, y+1, z);
-	layer->triangles[layer->free].c = packpoint(x+1, y+1, z+1);
-	layer->triangles[layer->free++].normal = nrm_right;
-	/* bottom side */
-	layer->triangles[layer->free].a = packpoint(x,   y,   z);
-	layer->triangles[layer->free].b = packpoint(x,   y+1, z);
-	layer->triangles[layer->free].c = packpoint(x+1, y,   z);
-	layer->triangles[layer->free++].normal = nrm_down;
-	layer->triangles[layer->free].a = packpoint(x+1, y,   z);
-	layer->triangles[layer->free].b = packpoint(x,   y+1, z);
-	layer->triangles[layer->free].c = packpoint(x+1, y+1, z);
-	layer->triangles[layer->free++].normal = nrm_down;
-	/* top side */
-	layer->triangles[layer->free].a = packpoint(x,   y,   z+1);
-	layer->triangles[layer->free].b = packpoint(x+1, y,   z+1);
-	layer->triangles[layer->free].c = packpoint(x,   y+1, z+1);
-	layer->triangles[layer->free++].normal = nrm_up;
-	layer->triangles[layer->free].a = packpoint(x+1, y,   z+1);
-	layer->triangles[layer->free].b = packpoint(x+1, y+1, z+1);
-	layer->triangles[layer->free].c = packpoint(x,   y+1, z+1);
-	layer->triangles[layer->free++].normal = nrm_up;
-	return layer;
-}
+	VipsRegion *region = NULL;
+	VipsRect rect;
+	int w, h, x, y;
 
-/* remove any double triangles inside a layer (gets rid of inner partitions) */
-void layer_uniq(struct layer *layer)
-{
-	int i, j;
-	struct triangle *t1, *t2;
-
-	for(i = 0, j = 1; i < (layer->free - 1);) {
-		/* compare triangles i and j */
-		if ((layer->triangles[i].a != 0xffffffffffffffff) && (layer->triangles[j].a != 0xffffffffffffffff)) {
-			t1 = &layer->triangles[i];
-			t2 = &layer->triangles[j];
-			if ((t1->a == t2->a) && (t1->b == t2->b) && (t1->c == t2->c)) {
-				t1->a = t1->b = t1->c = t2->a = t2->b = t2->c = 0xffffffffffffffff;
-				i++;
-				j = i+1;
+	w = vips_image_get_width(image);
+	h = vips_image_get_height(image);
+	region = vips_region_new(image);
+	for(y = 0; y < h; y++) {
+		rect.left = 0;
+		rect.top = y;
+		rect.width = w;
+		rect.height = 1;
+		if (vips_region_prepare(region, &rect) < 0) vips_error_exit("Can't prepare region");
+		for(x = 0; x < w; x++) {
+			if (*VIPS_REGION_ADDR(region, x, y)) {
+				if (0xff == *VIPS_REGION_ADDR(region, x, y)) {
+					if ((object->free + 2) >= object->size) object = resize(object, object->size * 2);
+					object->triangles[object->free].a = packpoint(x,   y,   z);
+					object->triangles[object->free].b = packpoint(x,   y+1, z);
+					object->triangles[object->free].c = packpoint(x+1, y,   z);
+					object->triangles[object->free++].normal = nrm_down;
+					object->triangles[object->free].a = packpoint(x,   y+1, z);
+					object->triangles[object->free].b = packpoint(x+1, y+1, z);
+					object->triangles[object->free].c = packpoint(x+1, y,   z);
+					object->triangles[object->free++].normal = nrm_down;
+				} else {
+					fprintf(stderr, "warning: pixel neither black nor white @ (%d, %d, %d)\n", x, y, z);
+				}
 			}
-			else if ((t1->a == t2->a) && (t1->b == t2->c) && (t1->c == t2->b)) {
-				t1->a = t1->b = t1->c = t2->a = t2->b = t2->c = 0xffffffffffffffff;
-				i++;
-				j = i+1;
-			}
-			else if ((t1->a == t2->b) && (t1->b == t2->a) && (t1->c == t2->c)) {
-				t1->a = t1->b = t1->c = t2->a = t2->b = t2->c = 0xffffffffffffffff;
-				i++;
-				j = i+1;
-			}
-			else if ((t1->a == t2->b) && (t1->b == t2->c) && (t1->c == t2->b)) {
-				t1->a = t1->b = t1->c = t2->a = t2->b = t2->c = 0xffffffffffffffff;
-				i++;
-				j = i+1;
-			}
-			else if ((t1->a == t2->c) && (t1->b == t2->a) && (t1->c == t2->b)) {
-				t1->a = t1->b = t1->c = t2->a = t2->b = t2->c = 0xffffffffffffffff;
-				i++;
-				j = i+1;
-			}
-			else if ((t1->a == t2->c) && (t1->b == t2->b) && (t1->c == t2->a)) {
-				t1->a = t1->b = t1->c = t2->a = t2->b = t2->c = 0xffffffffffffffff;
-				i++;
-				j = i+1;
-			}
-		}
-		if (++j >= layer->free) {
-			i++;
-			j = i+1;
 		}
 	}
+	g_object_unref(region);
+	return object;
 }
 
-/* remove all unused triangles in a layer and free all unnecessary memory */
-struct layer *layer_compress(struct layer *layer)
+/* add outer front surface */
+struct object *addfront(struct object *object, VipsImage *image, int z)
 {
-	int i, j;
+	VipsRegion *region = NULL;
+	VipsRect rect;
+	int w, x;
 
-	for(i = j = 0; j < layer->free; i++, j++) {
-		while (0xffffffffffffffff == layer->triangles[j].a) {
-			fprintf(stderr, "skip %d\n", j);
-			j++;
-		}
-		if (i != j) {
-			layer->triangles[i].normal = layer->triangles[j].normal;
-			layer->triangles[i].a = layer->triangles[j].a;
-			layer->triangles[i].b = layer->triangles[j].b;
-			layer->triangles[i].c = layer->triangles[j].c;
+	w = vips_image_get_width(image);
+	region = vips_region_new(image);
+	rect.left = 0;
+	rect.top = 0;
+	rect.width = w;
+	rect.height = 1;
+	if (vips_region_prepare(region, &rect) < 0) vips_error_exit("Can't prepare region");
+	for(x = 0; x < w; x++) {
+		if (*VIPS_REGION_ADDR(region, x, 0)) {
+			if ((object->free + 2) >= object->size) object = resize(object, object->size * 2);
+			object->triangles[object->free].a = packpoint(x,   0,   z+1);
+			object->triangles[object->free].b = packpoint(x,   0,   z);
+			object->triangles[object->free].c = packpoint(x+1, 0,   z);
+			object->triangles[object->free++].normal = nrm_front;
+			object->triangles[object->free].a = packpoint(x,   0,   z+1);
+			object->triangles[object->free].b = packpoint(x+1, 0,   z);
+			object->triangles[object->free].c = packpoint(x+1, 0,   z+1);
+			object->triangles[object->free++].normal = nrm_front;
 		}
 	}
-	layer->free = i;
-	layer = layer_resize(layer, i);
-	return layer;
+	g_object_unref(region);
+	return object;
+}
+
+/* add outer back surface */
+struct object *addback(struct object *object, VipsImage *image, int z)
+{
+	VipsRegion *region = NULL;
+	VipsRect rect;
+	int w, h, x;
+
+	w = vips_image_get_width(image);
+	h = vips_image_get_height(image);
+	region = vips_region_new(image);
+	rect.left = 0;
+	rect.top = h-1;
+	rect.width = w;
+	rect.height = 1;
+	if (vips_region_prepare(region, &rect) < 0) vips_error_exit("Can't prepare region");
+	for(x = 0; x < w; x++) {
+		if (*VIPS_REGION_ADDR(region, x, h-1)) {
+			if ((object->free + 2) >= object->size) object = resize(object, object->size * 2);
+			object->triangles[object->free].a = packpoint(x,   h, z);
+			object->triangles[object->free].b = packpoint(x,   h, z+1);
+			object->triangles[object->free].c = packpoint(x+1, h, z);
+			object->triangles[object->free++].normal = nrm_back;
+			object->triangles[object->free].a = packpoint(x,   h, z+1);
+			object->triangles[object->free].b = packpoint(x+1, h, z+1);
+			object->triangles[object->free].c = packpoint(x+1, h, z);
+			object->triangles[object->free++].normal = nrm_back;
+		}
+	}
+	g_object_unref(region);
+	return object;
+}
+
+/* add inner front and back surfaces */
+struct object *addx(struct object *object, VipsImage *image, int z)
+{
+	VipsRegion *region = NULL;
+	VipsRect rect;
+	int w, h, x, y;
+
+	w = vips_image_get_width(image);
+	h = vips_image_get_height(image);
+	region = vips_region_new(image);
+	for(y = 0; y < h-1; y++) {
+		rect.left = 0;
+		rect.top = y;
+		rect.width = w;
+		rect.height = 2;
+		if (vips_region_prepare(region, &rect) < 0) vips_error_exit("Can't prepare region");
+		for(x = 0; x < w; x++) {
+			if (!*VIPS_REGION_ADDR(region, x, y)) {
+				if (*VIPS_REGION_ADDR(region, x, y+1)) {
+					/* add front surface for voxel in behind row */
+					if ((object->free + 2) >= object->size) object = resize(object, object->size * 2);
+					object->triangles[object->free].a = packpoint(x,   y+1, z+1);
+					object->triangles[object->free].b = packpoint(x,   y+1, z);
+					object->triangles[object->free].c = packpoint(x+1, y+1, z);
+					object->triangles[object->free++].normal = nrm_front;
+					object->triangles[object->free].a = packpoint(x,   y+1, z+1);
+					object->triangles[object->free].b = packpoint(x+1, y+1, z);
+					object->triangles[object->free].c = packpoint(x+1, y+1, z+1);
+					object->triangles[object->free++].normal = nrm_front;
+				}
+			} else {
+				if (!*VIPS_REGION_ADDR(region, x, y+1)) {
+					/* add back surface for voxel in front row */
+					if ((object->free + 2) >= object->size) object = resize(object, object->size * 2);
+					object->triangles[object->free].a = packpoint(x,   y+1, z);
+					object->triangles[object->free].b = packpoint(x,   y+1, z+1);
+					object->triangles[object->free].c = packpoint(x+1, y+1, z);
+					object->triangles[object->free++].normal = nrm_back;
+					object->triangles[object->free].a = packpoint(x,   y+1, z+1);
+					object->triangles[object->free].b = packpoint(x+1, y+1, z+1);
+					object->triangles[object->free].c = packpoint(x+1, y+1, z);
+					object->triangles[object->free++].normal = nrm_back;
+				}
+			}
+		}
+	}
+	g_object_unref(region);
+	return object;
+}
+
+/* add outer left surface */
+struct object *addleft(struct object *object, VipsImage *image, int z)
+{
+	VipsRegion *region = NULL;
+	VipsRect rect;
+	int h, y;
+
+	h = vips_image_get_height(image);
+	region = vips_region_new(image);
+	rect.left = 0;
+	rect.top = 0;
+	rect.width = 1;
+	rect.height = h;
+	if (vips_region_prepare(region, &rect) < 0) vips_error_exit("Can't prepare region");
+	for(y = 0; y < h; y++) {
+		if (*VIPS_REGION_ADDR(region, 0, y)) {
+			if ((object->free + 2) >= object->size) object = resize(object, object->size * 2);
+			object->triangles[object->free].a = packpoint(0, y,   z);
+			object->triangles[object->free].b = packpoint(0, y,   z+1);
+			object->triangles[object->free].c = packpoint(0, y+1, z);
+			object->triangles[object->free++].normal = nrm_left;
+			object->triangles[object->free].a = packpoint(0, y,   z+1);
+			object->triangles[object->free].b = packpoint(0, y+1, z+1);
+			object->triangles[object->free].c = packpoint(0, y+1, z);
+			object->triangles[object->free++].normal = nrm_left;
+		}
+	}
+	g_object_unref(region);
+	return object;
+}
+
+/* add outer right surface */
+struct object *addright(struct object *object, VipsImage *image, int z)
+{
+	VipsRegion *region = NULL;
+	VipsRect rect;
+	int w, h, y;
+
+	w = vips_image_get_width(image);
+	h = vips_image_get_height(image);
+	region = vips_region_new(image);
+	rect.left = w-1;
+	rect.top = 0;
+	rect.width = 1;
+	rect.height = h;
+	if (vips_region_prepare(region, &rect) < 0) vips_error_exit("Can't prepare region");
+	for(y = 0; y < h; y++) {
+		if (*VIPS_REGION_ADDR(region, w-1, y)) {
+			if ((object->free + 2) >= object->size) object = resize(object, object->size * 2);
+			object->triangles[object->free].a = packpoint(w, y,   z);
+			object->triangles[object->free].b = packpoint(w, y+1, z);
+			object->triangles[object->free].c = packpoint(w, y,   z+1);
+			object->triangles[object->free++].normal = nrm_right;
+			object->triangles[object->free].a = packpoint(w, y,   z+1);
+			object->triangles[object->free].b = packpoint(w, y+1, z);
+			object->triangles[object->free].c = packpoint(w, y+1, z+1);
+			object->triangles[object->free++].normal = nrm_right;
+		}
+	}
+	g_object_unref(region);
+	return object;
+}
+
+/* add inner left and right surfaces */
+struct object *addy(struct object *object, VipsImage *image, int z)
+{
+	VipsRegion *region = NULL;
+	VipsRect rect;
+	int w, h, x, y;
+
+	w = vips_image_get_width(image);
+	h = vips_image_get_height(image);
+	region = vips_region_new(image);
+	for(x = 0; x < w-1; x++) {
+		rect.left = x;
+		rect.top = 0;
+		rect.width = 2;
+		rect.height = h;
+		if (vips_region_prepare(region, &rect) < 0) vips_error_exit("Can't prepare region");
+		for(y = 0; y < h; y++) {
+			if (!*VIPS_REGION_ADDR(region, x, y)) {
+				if (*VIPS_REGION_ADDR(region, x+1, y)) {
+					/* add left surface for voxel in 2nd row */
+					if ((object->free + 2) >= object->size) object = resize(object, object->size * 2);
+					object->triangles[object->free].a = packpoint(x+1, y,   z);
+					object->triangles[object->free].b = packpoint(x+1, y,   z+1);
+					object->triangles[object->free].c = packpoint(x+1, y+1, z);
+					object->triangles[object->free++].normal = nrm_left;
+					object->triangles[object->free].a = packpoint(x+1, y,   z+1);
+					object->triangles[object->free].b = packpoint(x+1, y+1, z+1);
+					object->triangles[object->free].c = packpoint(x+1, y+1, z);
+					object->triangles[object->free++].normal = nrm_left;
+				}
+			} else {
+				if (!*VIPS_REGION_ADDR(region, x+1, y)) {
+					/* add right surface for voxel in first row */
+					if ((object->free + 2) >= object->size) object = resize(object, object->size * 2);
+					object->triangles[object->free].a = packpoint(x+1, y,   z);
+					object->triangles[object->free].b = packpoint(x+1, y+1, z);
+					object->triangles[object->free].c = packpoint(x+1, y,   z+1);
+					object->triangles[object->free++].normal = nrm_right;
+					object->triangles[object->free].a = packpoint(x+1, y,   z+1);
+					object->triangles[object->free].b = packpoint(x+1, y+1, z);
+					object->triangles[object->free].c = packpoint(x+1, y+1, z+1);
+					object->triangles[object->free++].normal = nrm_right;
+				}
+			}
+		}
+	}
+	g_object_unref(region);
+	return object;
+}
+
+/* add inner top and bottom surfaces */
+struct object *addz(struct object *object, VipsImage *image1, VipsImage *image2, int z)
+{
+	VipsRegion *region1 = NULL;
+	VipsRegion *region2 = NULL;
+	VipsRect rect;
+	int w, h, x, y;
+
+	w = vips_image_get_width(image1);
+	h = vips_image_get_height(image1);
+	if (vips_image_get_width(image2) != w) vips_error_exit("Images have different width");
+	if (vips_image_get_height(image2) != h) vips_error_exit("Images have different height");
+	region1 = vips_region_new(image1);
+	region2 = vips_region_new(image2);
+	for(y = 0; y < h; y++) {
+		for(x = 0; x < w; x++) {
+			rect.left = 0;
+			rect.top = y;
+			rect.width = w;
+			rect.height = 1;
+			if (vips_region_prepare(region1, &rect) < 0) vips_error_exit("Can't prepare region");
+			if (vips_region_prepare(region2, &rect) < 0) vips_error_exit("Can't prepare region");
+			if (!*VIPS_REGION_ADDR(region1, x, y)) {
+				if (*VIPS_REGION_ADDR(region2, x, y)) {
+					/* add bottom surface for upper object */
+					if ((object->free + 2) >= object->size) object = resize(object, object->size * 2);
+					object->triangles[object->free].a = packpoint(x,   y,   z+1);
+					object->triangles[object->free].b = packpoint(x,   y+1, z+1);
+					object->triangles[object->free].c = packpoint(x+1, y,   z+1);
+					object->triangles[object->free++].normal = nrm_down;
+					object->triangles[object->free].a = packpoint(x,   y+1, z+1);
+					object->triangles[object->free].b = packpoint(x+1, y+1, z+1);
+					object->triangles[object->free].c = packpoint(x+1, y,   z+1);
+					object->triangles[object->free++].normal = nrm_down;
+				}
+			} else {
+				if (!*VIPS_REGION_ADDR(region2, x, y)) {
+					/* add top surface for lower object */
+					if ((object->free + 2) >= object->size) object = resize(object, object->size * 2);
+					object->triangles[object->free].a = packpoint(x,   y+1, z+1);
+					object->triangles[object->free].b = packpoint(x,   y,   z+1);
+					object->triangles[object->free].c = packpoint(x+1, y,   z+1);
+					object->triangles[object->free++].normal = nrm_up;
+					object->triangles[object->free].a = packpoint(x,   y+1, z+1);
+					object->triangles[object->free].b = packpoint(x+1, y,   z+1);
+					object->triangles[object->free].c = packpoint(x+1, y+1, z+1);
+					object->triangles[object->free++].normal = nrm_up;
+				}
+			}
+		}
+	}
+	g_object_unref(region1);
+	g_object_unref(region2);
+	return object;
+}
+
+/* add top surface */
+struct object *addtop(struct object *object, VipsImage *image, int z)
+{
+	VipsRegion *region = NULL;
+	VipsRect rect;
+	int w, h, x, y;
+
+	w = vips_image_get_width(image);
+	h = vips_image_get_height(image);
+	region = vips_region_new(image);
+	for(y = 0; y < h; y++) {
+		rect.left = 0;
+		rect.top = y;
+		rect.width = w;
+		rect.height = 1;
+		if (vips_region_prepare(region, &rect) < 0) vips_error_exit("Can't prepare region");
+		for(x = 0; x < w; x++) {
+			if (*VIPS_REGION_ADDR(region, x, y)) {
+				if ((object->free + 2) >= object->size) object = resize(object, object->size * 2);
+				object->triangles[object->free].a = packpoint(x,   y+1, z+1);
+				object->triangles[object->free].b = packpoint(x,   y,   z+1);
+				object->triangles[object->free].c = packpoint(x+1, y,   z+1);
+				object->triangles[object->free++].normal = nrm_up;
+				object->triangles[object->free].a = packpoint(x,   y+1, z+1);
+				object->triangles[object->free].b = packpoint(x+1, y,   z+1);
+				object->triangles[object->free].c = packpoint(x+1, y+1, z+1);
+				object->triangles[object->free++].normal = nrm_up;
+			}
+		}
+	}
+	g_object_unref(region);
+	return object;
 }
 
 /* dump all triangles as ASCII STL */
@@ -272,17 +470,46 @@ fprintf(stderr, "%d triangles dumped\n", count);
 
 int main(int argc, char *argv[])
 {
-	struct layer *layer = NULL;
 	struct object *object = NULL;
+	VipsImage *image1 = NULL;
+	VipsImage *image2 = NULL;
+	int z;
+	char s[80];
 
-	object = object_resize(object, 10);
-	layer = layer_resize(layer, 10);
-	object->layers[0] = layer;
-	layer = addvoxel(layer, 0, 0, 0);
-	layer = addvoxel(layer, 1, 0, 0);
-	layer_uniq(layer);
-	layer = layer_compress(layer);
+	if (VIPS_INIT (argv[0])) vips_error_exit("unable to start VIPS");
+
+	object = resize(NULL, 10);
+
+	snprintf(s, sizeof(s), "f-%06d.gif", 0);
+	image1 = vips_image_new_from_file(s, NULL);
+	if (NULL == image1) vips_error_exit("Can't load file");
+	object = addbottom(object, image1, 0);
+	for(z = 0; z < 999; z++) {
+fprintf(stderr, "\rWorking on layer %d", z); fflush(stderr);
+		object = addfront(object, image1, z);
+		object = addback(object, image1, z);
+		object = addx(object, image1, z);
+		object = addleft(object, image1, z);
+		object = addright(object, image1, z);
+		object = addy(object, image1, z);
+		snprintf(s, sizeof(s), "f-%06d.gif", z+1);
+		image2 = vips_image_new_from_file(s, NULL);
+		if (NULL == image2) vips_error_exit("Can't load file");
+		object = addz(object, image1, image2, z);
+		g_object_unref(image1);
+		image1 = image2;
+	}
+	object = addfront(object, image1, z);
+	object = addback(object, image1, z);
+	object = addx(object, image1, z);
+	object = addleft(object, image1, z);
+	object = addright(object, image1, z);
+	object = addy(object, image1, z);
+	object = addtop(object, image1, z);
 
 printf("solid test\n");
-	dumptriangles(layer->triangles, layer->size);
+	dumptriangles(object->triangles, object->size);
+
+	vips_shutdown();
+	return 0;
 }
