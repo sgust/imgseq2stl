@@ -3,8 +3,11 @@
 /* coordinates used: x to the right, y to the back, z to the top */
 
 //FIXME
-// add command line parameters
+// use output file name
+// fix errors (bowl-2 1K 990 to 999)
 // add scaling of output
+// binary STL format
+// multi-threading
 
 #include <vips/vips.h>
 
@@ -12,6 +15,8 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <getopt.h>
+#include <bsd/string.h>
 
 /* we need only 6 different surface normals, only working on cubes */
 typedef enum {
@@ -470,35 +475,80 @@ fprintf(stderr, "%d triangles dumped\n", count);
 
 int main(int argc, char *argv[])
 {
+	struct option longoptions[] = {
+		{ "input", 1, NULL, 'i' },
+		{ "output", 1, NULL, 'o' },
+		{ "first", 1, NULL, 'f' },
+		{ "last", 1, NULL, 'l' },
+		{ 0, 0, 0, 0 }
+	};
+	char para_input[80];
+	char para_output[80];
+	int para_first = 0;
+	int para_last = 0;
 	struct object *object = NULL;
 	VipsImage *image1 = NULL;
 	VipsImage *image2 = NULL;
 	int z;
 	char s[80];
 
+	/* parameter parsing */
+	para_input[0] = 0;
+	para_output[0] = 0;
+	while(1) {
+		int i;
+		i = getopt_long(argc, argv, "", longoptions, NULL);
+		if (i == -1) break;
+		switch(i) {
+			case 'i':
+				strlcpy(para_input, optarg, sizeof(para_input));
+				break;
+			case 'o':
+				strlcpy(para_output, optarg, sizeof(para_output));
+				break;
+			case 'f':
+				para_first = strtol(optarg, NULL, 0);
+				break;
+			case 'l':
+				para_last = strtol(optarg, NULL, 0);
+				break;
+		}
+	}
+	/* sanity checks */
+	{
+		int abort = 0;
+		if (para_first <= 0) { fprintf(stderr, "--first must be > 0\n"); abort = 1; }
+		if (para_last <= 0) { fprintf(stderr, "--last must be > 0\n"); abort = 1; }
+		if (para_last <= para_first) { fprintf(stderr, "--last must be > --first\n"); abort = 1; }
+		if (0 == strlen(para_input)) { fprintf(stderr, "--input must be set\n"); abort = 1; }
+		if (0 == strlen(para_output)) { fprintf(stderr, "--output must be set\n"); abort = 1; }
+		if (abort) exit(1);
+	}
+
 	if (VIPS_INIT (argv[0])) vips_error_exit("unable to start VIPS");
 
 	object = resize(NULL, 10);
 
-	snprintf(s, sizeof(s), "f-%06d.gif", 0);
+	snprintf(s, sizeof(s), para_input, 0);
 	image1 = vips_image_new_from_file(s, NULL);
 	if (NULL == image1) vips_error_exit("Can't load file");
 	object = addbottom(object, image1, 0);
-	for(z = 0; z < 999; z++) {
-fprintf(stderr, "\rWorking on layer %d", z); fflush(stderr);
+	for(z = para_first; z < para_last; z++) {
+		fprintf(stderr, "\rWorking on layer %d", z); fflush(stderr);
 		object = addfront(object, image1, z);
 		object = addback(object, image1, z);
 		object = addx(object, image1, z);
 		object = addleft(object, image1, z);
 		object = addright(object, image1, z);
 		object = addy(object, image1, z);
-		snprintf(s, sizeof(s), "f-%06d.gif", z+1);
+		snprintf(s, sizeof(s), para_input, z+1);
 		image2 = vips_image_new_from_file(s, NULL);
 		if (NULL == image2) vips_error_exit("Can't load file");
 		object = addz(object, image1, image2, z);
 		g_object_unref(image1);
 		image1 = image2;
 	}
+	fprintf(stderr, "\rWorking on layer %d", z); fflush(stderr);
 	object = addfront(object, image1, z);
 	object = addback(object, image1, z);
 	object = addx(object, image1, z);
@@ -506,6 +556,7 @@ fprintf(stderr, "\rWorking on layer %d", z); fflush(stderr);
 	object = addright(object, image1, z);
 	object = addy(object, image1, z);
 	object = addtop(object, image1, z);
+	fprintf(stderr, "\r                             \r"); fflush(stderr);
 
 printf("solid test\n");
 	dumptriangles(object->triangles, object->size);

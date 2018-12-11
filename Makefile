@@ -1,6 +1,6 @@
 # simple Makefile, all done by implicit rules
 
-CFLAGS+=-Wall -O2 -g `pkg-config vips --cflags --libs`
+CFLAGS+=-Wall -O2 -g `pkg-config vips --cflags --libs` -lbsd
 
 all: imgseq2stl
 
