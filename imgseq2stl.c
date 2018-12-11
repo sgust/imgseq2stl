@@ -4,7 +4,7 @@
 
 //FIXME
 // use output file name
-// fix errors (bowl-2 1K 990 to 999)
+// fix errors (bowl-2 1K 990 to 999) looks like double triangles in last layer?
 // add scaling of output
 // binary STL format
 // multi-threading
@@ -529,33 +529,32 @@ int main(int argc, char *argv[])
 
 	object = resize(NULL, 10);
 
-	snprintf(s, sizeof(s), para_input, 0);
-	image1 = vips_image_new_from_file(s, NULL);
-	if (NULL == image1) vips_error_exit("Can't load file");
-	object = addbottom(object, image1, 0);
-	for(z = para_first; z < para_last; z++) {
+	for(z = para_first; z <= para_last; z++) {
 		fprintf(stderr, "\rWorking on layer %d", z); fflush(stderr);
+		snprintf(s, sizeof(s), para_input, z);
+		image1 = vips_image_new_from_file(s, NULL);
+		if (NULL == image1) vips_error_exit("Can't load file");
+		if (z == para_first) {
+			/* first layer needs to have bottom added */
+			object = addbottom(object, image1, z);
+		} else {
+			/* rest of the layers need z added */
+			object = addz(object, image1, image2, z);
+			g_object_unref(image2);
+		}
 		object = addfront(object, image1, z);
 		object = addback(object, image1, z);
 		object = addx(object, image1, z);
 		object = addleft(object, image1, z);
 		object = addright(object, image1, z);
 		object = addy(object, image1, z);
-		snprintf(s, sizeof(s), para_input, z+1);
-		image2 = vips_image_new_from_file(s, NULL);
-		if (NULL == image2) vips_error_exit("Can't load file");
-		object = addz(object, image1, image2, z);
-		g_object_unref(image1);
-		image1 = image2;
+		image2 = image1;
+		if (z == para_last) {
+			/* last layer needs top added */
+			object = addtop(object, image1, z);
+			g_object_unref(image1);
+		}
 	}
-	fprintf(stderr, "\rWorking on layer %d", z); fflush(stderr);
-	object = addfront(object, image1, z);
-	object = addback(object, image1, z);
-	object = addx(object, image1, z);
-	object = addleft(object, image1, z);
-	object = addright(object, image1, z);
-	object = addy(object, image1, z);
-	object = addtop(object, image1, z);
 	fprintf(stderr, "\r                             \r"); fflush(stderr);
 
 printf("solid test\n");
