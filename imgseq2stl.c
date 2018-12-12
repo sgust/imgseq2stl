@@ -4,7 +4,7 @@
 
 //FIXME
 // use output file name
-// fix errors (bowl-2 1K 990 to 999) looks like double triangles in last layer?
+// fix errors (bowl-2 1K 998 to 999)
 // add scaling of output
 // binary STL format
 // multi-threading
@@ -365,26 +365,26 @@ struct object *addz(struct object *object, VipsImage *image1, VipsImage *image2,
 				if (*VIPS_REGION_ADDR(region2, x, y)) {
 					/* add bottom surface for upper object */
 					if ((object->free + 2) >= object->size) object = resize(object, object->size * 2);
-					object->triangles[object->free].a = packpoint(x,   y,   z+1);
-					object->triangles[object->free].b = packpoint(x,   y+1, z+1);
-					object->triangles[object->free].c = packpoint(x+1, y,   z+1);
+					object->triangles[object->free].a = packpoint(x,   y,   z);
+					object->triangles[object->free].b = packpoint(x,   y+1, z);
+					object->triangles[object->free].c = packpoint(x+1, y,   z);
 					object->triangles[object->free++].normal = nrm_down;
-					object->triangles[object->free].a = packpoint(x,   y+1, z+1);
-					object->triangles[object->free].b = packpoint(x+1, y+1, z+1);
-					object->triangles[object->free].c = packpoint(x+1, y,   z+1);
+					object->triangles[object->free].a = packpoint(x,   y+1, z);
+					object->triangles[object->free].b = packpoint(x+1, y+1, z);
+					object->triangles[object->free].c = packpoint(x+1, y,   z);
 					object->triangles[object->free++].normal = nrm_down;
 				}
 			} else {
 				if (!*VIPS_REGION_ADDR(region2, x, y)) {
 					/* add top surface for lower object */
 					if ((object->free + 2) >= object->size) object = resize(object, object->size * 2);
-					object->triangles[object->free].a = packpoint(x,   y+1, z+1);
-					object->triangles[object->free].b = packpoint(x,   y,   z+1);
-					object->triangles[object->free].c = packpoint(x+1, y,   z+1);
+					object->triangles[object->free].a = packpoint(x,   y+1, z);
+					object->triangles[object->free].b = packpoint(x,   y,   z);
+					object->triangles[object->free].c = packpoint(x+1, y,   z);
 					object->triangles[object->free++].normal = nrm_up;
-					object->triangles[object->free].a = packpoint(x,   y+1, z+1);
-					object->triangles[object->free].b = packpoint(x+1, y,   z+1);
-					object->triangles[object->free].c = packpoint(x+1, y+1, z+1);
+					object->triangles[object->free].a = packpoint(x,   y+1, z);
+					object->triangles[object->free].b = packpoint(x+1, y,   z);
+					object->triangles[object->free].c = packpoint(x+1, y+1, z);
 					object->triangles[object->free++].normal = nrm_up;
 				}
 			}
@@ -517,7 +517,7 @@ int main(int argc, char *argv[])
 	/* sanity checks */
 	{
 		int abort = 0;
-		if (para_first <= 0) { fprintf(stderr, "--first must be > 0\n"); abort = 1; }
+		if (para_first < 0) { fprintf(stderr, "--first must be >= 0\n"); abort = 1; }
 		if (para_last <= 0) { fprintf(stderr, "--last must be > 0\n"); abort = 1; }
 		if (para_last <= para_first) { fprintf(stderr, "--last must be > --first\n"); abort = 1; }
 		if (0 == strlen(para_input)) { fprintf(stderr, "--input must be set\n"); abort = 1; }
@@ -539,7 +539,7 @@ int main(int argc, char *argv[])
 			object = addbottom(object, image1, z);
 		} else {
 			/* rest of the layers need z added */
-			object = addz(object, image1, image2, z);
+			object = addz(object, image2, image1, z);
 			g_object_unref(image2);
 		}
 		object = addfront(object, image1, z);
@@ -559,6 +559,7 @@ int main(int argc, char *argv[])
 
 printf("solid test\n");
 	dumptriangles(object->triangles, object->size);
+printf("endsolid test\n");
 
 	vips_shutdown();
 	return 0;
