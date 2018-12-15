@@ -3,10 +3,8 @@
 /* coordinates used: x to the right, y to the back, z to the top */
 
 //FIXME
-// use output file name
-// fix errors (bowl-2 1K 998 to 999)
 // add scaling of output
-// binary STL format
+// binary STL format or obj format
 // multi-threading
 
 #include <vips/vips.h>
@@ -430,8 +428,7 @@ struct object *addtop(struct object *object, VipsImage *image, int z)
 }
 
 /* dump all triangles as ASCII STL */
-//FIXME: use file handle, later use binary format
-void dumptriangles(struct triangle *triangles, size_t size)
+void dumptriangles_ascii(FILE *file, struct triangle *triangles, size_t size)
 {
 	int i;
 	int count = 0;
@@ -439,38 +436,38 @@ void dumptriangles(struct triangle *triangles, size_t size)
 	for(i = 0; i < size; i++) {
 		if (triangles[i].a != 0xffffffffffffffff) {
 			count++;
-			printf("facet normal ");
+			fprintf(file, "facet normal ");
 			switch (triangles[i].normal) {
-				case nrm_front: printf("0 -1 0"); break;
-				case nrm_back: printf("0 1 0"); break;
-				case nrm_left: printf("-1 0 0"); break;
-				case nrm_right: printf("1 0 0"); break;
-				case nrm_up: printf("0 0 1"); break;
-				case nrm_down: printf("0 0 -1"); break;
+				case nrm_front: fprintf(file, "0 -1 0"); break;
+				case nrm_back: fprintf(file, "0 1 0"); break;
+				case nrm_left: fprintf(file, "-1 0 0"); break;
+				case nrm_right: fprintf(file, "1 0 0"); break;
+				case nrm_up: fprintf(file, "0 0 1"); break;
+				case nrm_down: fprintf(file, "0 0 -1"); break;
 				default: fprintf(stderr, "internal error: illegal surface normal @%d\n", i); exit(1); break;
 			}
-			printf("\n");
-			printf("outer loop\n");
-			printf("vertex %lu %lu %lu\n",
+			fprintf(file, "\n");
+			fprintf(file, "outer loop\n");
+			fprintf(file, "vertex %lu %lu %lu\n",
 				triangles[i].a & 0xfffff,
 				(triangles[i].a >> 20) & 0xfffff,
 				(triangles[i].a >> 40) & 0xfffff
 			);
-			printf("vertex %lu %lu %lu\n",
+			fprintf(file, "vertex %lu %lu %lu\n",
 				triangles[i].b & 0xfffff,
 				(triangles[i].b >> 20) & 0xfffff,
 				(triangles[i].b >> 40) & 0xfffff
 			);
-			printf("vertex %lu %lu %lu\n",
+			fprintf(file, "vertex %lu %lu %lu\n",
 				triangles[i].c & 0xfffff,
 				(triangles[i].c >> 20) & 0xfffff,
 				(triangles[i].c >> 40) & 0xfffff
 			);
-			printf("endloop\n");
-			printf("endfacet\n");
+			fprintf(file, "endloop\n");
+			fprintf(file, "endfacet\n");
 		}
 	}
-fprintf(stderr, "%d triangles dumped\n", count);
+	fprintf(stderr, "%d triangles dumped\n", count);
 }
 
 int main(int argc, char *argv[])
@@ -491,6 +488,7 @@ int main(int argc, char *argv[])
 	VipsImage *image2 = NULL;
 	int z;
 	char s[80];
+	FILE *file;
 
 	/* parameter parsing */
 	para_input[0] = 0;
@@ -527,6 +525,12 @@ int main(int argc, char *argv[])
 
 	if (VIPS_INIT (argv[0])) vips_error_exit("unable to start VIPS");
 
+	file = fopen(para_output, "w");
+	if (NULL == file) {
+		fprintf(stderr, "Can't open output file for write\n");
+		exit(1);
+	}
+
 	object = resize(NULL, 10);
 
 	for(z = para_first; z <= para_last; z++) {
@@ -557,9 +561,9 @@ int main(int argc, char *argv[])
 	}
 	fprintf(stderr, "\r                             \r"); fflush(stderr);
 
-printf("solid test\n");
-	dumptriangles(object->triangles, object->size);
-printf("endsolid test\n");
+	fprintf(file, "solid %s\n", para_output);
+	dumptriangles_ascii(file, object->triangles, object->size);
+	fprintf(file, "endsolid %s\n", para_output);
 
 	vips_shutdown();
 	return 0;
