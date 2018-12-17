@@ -51,9 +51,9 @@ point_t packpoint(int x, int y, int z)
 }
 
 /* resize a data structure, return NULL on error */
-struct object *resize(struct object *object, int numtriangles)
+struct object *resize(struct object *object, unsigned long int numtriangles)
 {
-	int newsize = 0;
+	unsigned long int newsize = 0;
 
 	if (NULL == object) {
 		/* allocate size info and fill it */
