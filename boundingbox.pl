@@ -21,6 +21,6 @@ while(<>) {
 	}
 }
 
-print "X ", $xmin, "-", $xmax, "\n";
-print "Y ", $ymin, "-", $ymax, "\n";
-print "Z ", $zmin, "-", $zmax, "\n";
+print "X ", $xmin, " - ", $xmax, " size ", $xmax-$xmin, "\n";
+print "Y ", $ymin, " - ", $ymax, " size ", $ymax-$ymin, "\n";
+print "Z ", $zmin, " - ", $zmax, " size ", $zmax-$zmin, "\n";
