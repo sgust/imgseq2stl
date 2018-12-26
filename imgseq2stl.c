@@ -3,8 +3,6 @@
 /* coordinates used: x to the right, y to the back, z to the top */
 
 //FIXME
-// add scaling of output
-// binary STL format or obj format
 // multi-threading
 
 #include <vips/vips.h>
@@ -103,66 +101,6 @@ struct object *addbottom(struct object *object, VipsImage *image, int z)
 					object->triangles[object->free++].normal = nrm_down;
 				} else {
 					fprintf(stderr, "warning: pixel neither black nor white @ (%d, %d, %d)\n", x, y, z);
-				}
-			}
-		}
-	}
-	g_object_unref(region);
-	return object;
-}
-
-/* add bottom surface, BROKEN because all triangles need to have common vertices */
-struct object *addbottom_broken(struct object *object, VipsImage *image, int z)
-{
-	VipsRegion *region = NULL;
-	VipsRect rect;
-	int w, h, x, y;
-	int startx;
-
-	w = vips_image_get_width(image);
-	h = vips_image_get_height(image);
-	region = vips_region_new(image);
-	for(y = 0; y < h; y++) {
-		rect.left = 0;
-		rect.top = y;
-		rect.width = w;
-		rect.height = 1;
-		if (vips_region_prepare(region, &rect) < 0) vips_error_exit("Can't prepare region");
-		startx = -1;
-		for(x = 0; x < w; x++) {
-			if (*VIPS_REGION_ADDR(region, x, y)) {
-				/* current pixel is on */
-				if (startx < 0) {
-					/* start new sequence */
-					startx = x;
-				} else {
-					if (((x - startx) > 10) || ((w-1) == x)) {
-						/* 10 pixels on or reached end, create surface */
-						if ((object->free + 2) >= object->size) object = resize(object, object->size * 2);
-						object->triangles[object->free].a = packpoint(startx, y,   z);
-						object->triangles[object->free].b = packpoint(startx, y+1, z);
-						object->triangles[object->free].c = packpoint(x+1,    y,   z);
-						object->triangles[object->free++].normal = nrm_down;
-						object->triangles[object->free].a = packpoint(startx, y+1, z);
-						object->triangles[object->free].b = packpoint(x+1,    y+1, z);
-						object->triangles[object->free].c = packpoint(x+1,    y,   z);
-						object->triangles[object->free++].normal = nrm_down;
-						startx = -1;
-					}
-				}
-			} else {
-				/* current pixel is off, create surface */
-				if (startx >= 0) {
-					if ((object->free + 2) >= object->size) object = resize(object, object->size * 2);
-					object->triangles[object->free].a = packpoint(startx, y,   z);
-					object->triangles[object->free].b = packpoint(startx, y+1, z);
-					object->triangles[object->free].c = packpoint(x,      y,   z);
-					object->triangles[object->free++].normal = nrm_down;
-					object->triangles[object->free].a = packpoint(startx, y+1, z);
-					object->triangles[object->free].b = packpoint(x,      y+1, z);
-					object->triangles[object->free].c = packpoint(x,      y,   z);
-					object->triangles[object->free++].normal = nrm_down;
-					startx = -1;
 				}
 			}
 		}
@@ -276,106 +214,6 @@ struct object *addx(struct object *object, VipsImage *image, int z)
 					object->triangles[object->free].b = packpoint(x+1, y+1, z+1);
 					object->triangles[object->free].c = packpoint(x+1, y+1, z);
 					object->triangles[object->free++].normal = nrm_back;
-				}
-			}
-		}
-	}
-	g_object_unref(region);
-	return object;
-}
-
-/* add inner front and back surfaces, BROKEN because all triangles need to have common vertices */
-struct object *addx_broken(struct object *object, VipsImage *image, int z)
-{
-	VipsRegion *region = NULL;
-	VipsRect rect;
-	int w, h, x, y;
-	int startx1, startx2;
-
-	w = vips_image_get_width(image);
-	h = vips_image_get_height(image);
-	region = vips_region_new(image);
-	for(y = 0; y < h-1; y++) {
-		rect.left = 0;
-		rect.top = y;
-		rect.width = w;
-		rect.height = 2;
-		if (vips_region_prepare(region, &rect) < 0) vips_error_exit("Can't prepare region");
-		startx1 = -1;
-		startx2 = -1;
-		for(x = 0; x < w; x++) {
-			if (!*VIPS_REGION_ADDR(region, x, y)) {
-				if (*VIPS_REGION_ADDR(region, x, y+1)) {
-					/* add front surface for voxel in behind row */
-					if (startx1 < 0) {
-						/* start new sequence */
-						startx1 = x;
-					} else {
-						if (((x%10) == 0) || ((w-1) == x)) {
-							/* every 10 pixels on or reached end, create surface */
-							if ((object->free + 2) >= object->size) object = resize(object, object->size * 2);
-							object->triangles[object->free].a = packpoint(startx1, y+1, z+1);
-							object->triangles[object->free].b = packpoint(startx1, y+1, z);
-							object->triangles[object->free].c = packpoint(x+1,     y+1, z);
-							object->triangles[object->free++].normal = nrm_front;
-							object->triangles[object->free].a = packpoint(startx1, y+1, z+1);
-							object->triangles[object->free].b = packpoint(x+1,     y+1, z);
-							object->triangles[object->free].c = packpoint(x+1,     y+1, z+1);
-							object->triangles[object->free++].normal = nrm_front;
-							startx1 = -1;
-						}
-					}
-				} else {
-					/* voxel is off, sequence ends */
-					if (startx1 >= 0) {
-						if ((object->free + 2) >= object->size) object = resize(object, object->size * 2);
-						object->triangles[object->free].a = packpoint(startx1, y+1, z+1);
-						object->triangles[object->free].b = packpoint(startx1, y+1, z);
-						object->triangles[object->free].c = packpoint(x,       y+1, z);
-						object->triangles[object->free++].normal = nrm_front;
-						object->triangles[object->free].a = packpoint(startx1, y+1, z+1);
-						object->triangles[object->free].b = packpoint(x,       y+1, z);
-						object->triangles[object->free].c = packpoint(x,       y+1, z+1);
-						object->triangles[object->free++].normal = nrm_front;
-						startx1 = -1;
-					}
-				}
-			}
-			if (!*VIPS_REGION_ADDR(region, x, y+1)) {
-				if (*VIPS_REGION_ADDR(region, x, y)) {
-					/* add back surface for voxel in front row */
-					if (startx2 < 0) {
-						/* start new sequence */
-						startx2 = x;
-					} else {
-						if (((x%10) == 0) || ((w-1) == x)) {
-							/* 10 pixels on or reached end, create surface */
-							if ((object->free + 2) >= object->size) object = resize(object, object->size * 2);
-							object->triangles[object->free].a = packpoint(startx2, y+1, z);
-							object->triangles[object->free].b = packpoint(startx2, y+1, z+1);
-							object->triangles[object->free].c = packpoint(x+1,     y+1, z);
-							object->triangles[object->free++].normal = nrm_back;
-							object->triangles[object->free].a = packpoint(startx2, y+1, z+1);
-							object->triangles[object->free].b = packpoint(x+1,     y+1, z+1);
-							object->triangles[object->free].c = packpoint(x+1,     y+1, z);
-							object->triangles[object->free++].normal = nrm_back;
-							startx2 = -1;
-						}
-					}
-				} else {
-					/* voxel is off, sequence ends */
-					if (startx2 >= 0) {
-						if ((object->free + 2) >= object->size) object = resize(object, object->size * 2);
-						object->triangles[object->free].a = packpoint(startx2, y+1, z);
-						object->triangles[object->free].b = packpoint(startx2, y+1, z+1);
-						object->triangles[object->free].c = packpoint(x,       y+1, z);
-						object->triangles[object->free++].normal = nrm_back;
-						object->triangles[object->free].a = packpoint(startx2, y+1, z+1);
-						object->triangles[object->free].b = packpoint(x,       y+1, z+1);
-						object->triangles[object->free].c = packpoint(x,       y+1, z);
-						object->triangles[object->free++].normal = nrm_back;
-						startx2 = -1;
-					}
 				}
 			}
 		}
@@ -582,67 +420,6 @@ struct object *addtop(struct object *object, VipsImage *image, int z)
 				object->triangles[object->free++].normal = nrm_up;
 			}
 		}
-	}
-	g_object_unref(region);
-	return object;
-}
-
-/* add top surface, BROKEN because all triangles need to have common vertices */
-struct object *addtop_broken(struct object *object, VipsImage *image, int z)
-{
-	VipsRegion *region = NULL;
-	VipsRect rect;
-	int w, h, x, y;
-	int startx;
-
-	w = vips_image_get_width(image);
-	h = vips_image_get_height(image);
-	region = vips_region_new(image);
-	for(y = 0; y < h; y++) {
-		rect.left = 0;
-		rect.top = y;
-		rect.width = w;
-		rect.height = 1;
-		if (vips_region_prepare(region, &rect) < 0) vips_error_exit("Can't prepare region");
-		startx = -1;
-		for(x = 0; x < w; x++) {
-			if (*VIPS_REGION_ADDR(region, x, y)) {
-				/* current pixel is on */
-				if (startx < 0) {
-					/* start new sequence */
-					startx = x;
-				} else {
-					if (((x - startx) > 10) || ((w-1) == x)) {
-						/* 10 pixels on or reached end, create surface */
-						if ((object->free + 2) >= object->size) object = resize(object, object->size * 2);
-						object->triangles[object->free].a = packpoint(startx, y,   z+1);
-						object->triangles[object->free].b = packpoint(x+1,    y,   z+1);
-						object->triangles[object->free].c = packpoint(startx, y+1, z+1);
-						object->triangles[object->free++].normal = nrm_up;
-						object->triangles[object->free].a = packpoint(startx, y+1, z+1);
-						object->triangles[object->free].b = packpoint(x+1,    y,   z+1);
-						object->triangles[object->free].c = packpoint(x+1,    y+1, z+1);
-						object->triangles[object->free++].normal = nrm_up;
-						startx = -1;
-					}
-				}
-			} else {
-				/* current pixel is off, create surface */
-				if (startx >= 0) {
-					if ((object->free + 2) >= object->size) object = resize(object, object->size * 2);
-					object->triangles[object->free].a = packpoint(startx, y,   z+1);
-					object->triangles[object->free].b = packpoint(x,      y,   z+1);
-					object->triangles[object->free].c = packpoint(startx, y+1, z+1);
-					object->triangles[object->free++].normal = nrm_up;
-					object->triangles[object->free].a = packpoint(startx, y+1, z+1);
-					object->triangles[object->free].b = packpoint(x,      y,   z+1);
-					object->triangles[object->free].c = packpoint(x,      y+1, z+1);
-					object->triangles[object->free++].normal = nrm_up;
-					startx = -1;
-				}
-			}
-		}
-
 	}
 	g_object_unref(region);
 	return object;
