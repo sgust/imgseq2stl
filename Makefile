@@ -2,7 +2,7 @@
 
 CFLAGS+=-Wall -O2 -g `pkg-config vips --cflags --libs` -lbsd
 
-all: imgseq2stl
+all: imgseq2stl filterimg
 
 clean:
 	rm -f *.o
