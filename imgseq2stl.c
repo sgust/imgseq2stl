@@ -2,14 +2,12 @@
 
 /* coordinates used: x to the right, y to the back, z to the top */
 
-//FIXME
-// multi-threading
-
 #include <vips/vips.h>
 
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <unistd.h>
 #include <string.h>
 #include <getopt.h>
 #include <bsd/string.h>
@@ -42,6 +40,28 @@ struct object {
 	struct triangle triangles[];
 };
 
+/* thread worker job */
+typedef enum {
+	work_finished,	/* thread has finished */
+	work_fblrxy,	/* front back left right x y */
+	work_z		/* z */
+} work_t;
+
+/* thread job */
+struct job {
+	GThread *id;
+	volatile work_t work;
+	struct object *object;
+	int z;
+	VipsImage *image1;
+	VipsImage *image2;
+	uint8_t *refcnt1;
+	uint8_t *refcnt2;
+};
+
+/* collect all data from all threads in Fractal */
+struct object *Fractal = NULL;
+
 /* pack a point into point_t format */
 point_t packpoint(int x, int y, int z)
 {
@@ -69,6 +89,18 @@ struct object *resize(struct object *object, unsigned long int numtriangles)
 	object->size = numtriangles;
 	object->bytes = newsize;
 	return object;
+}
+
+/* combine two object data structures */
+struct object *objcat(struct object *dst, struct object *src)
+{
+	if (!src->free) return dst;
+	if (dst->size <= (dst->free + src->free)) {
+		dst = resize(dst, 2 * (dst->free + src->free));
+	}
+	memcpy(&dst->triangles[dst->free], &src->triangles[0], src->free * sizeof(struct triangle));
+	dst->free += src->free;
+	return dst;
 }
 
 /* add bottom surface */
@@ -468,6 +500,85 @@ void dumptriangles_ascii(FILE *file, struct triangle *triangles, size_t size)
 	fprintf(stderr, "%d triangles dumped\n", count);
 }
 
+/* gets started as a new thread */
+void *jobs_worker(void *data)
+{
+	struct job *job = data;
+
+	switch (job->work) {
+		case work_fblrxy:
+			job->object = addfront(job->object, job->image1, job->z);
+			job->object = addback(job->object, job->image1, job->z);
+			job->object = addleft(job->object, job->image1, job->z);
+			job->object = addright(job->object, job->image1, job->z);
+			job->object = addx(job->object, job->image1, job->z);
+			job->object = addy(job->object, job->image1, job->z);
+			break;
+		case work_z:
+			job->object = addz(job->object, job->image2, job->image1, job->z);
+			break;
+		default:
+			break;
+	}
+	vips_thread_shutdown();
+	job->work = work_finished;
+	return NULL;
+}
+
+/* collect results and cleanup after finished job, runs in main thread */
+void jobs_end(struct job *job)
+{
+	/* wait for thread to end */
+	(void) g_thread_join(job->id);
+	job->id = NULL;
+	/* copy triangles */
+	Fractal = objcat(Fractal, job->object);
+	free(job->object);
+	job->object = NULL;
+	/* do reference counting */
+	if (job->image1 && (++(*job->refcnt1) > 2)) {
+		g_object_unref(job->image1);
+	}
+	if (job->image2 && (++(*job->refcnt2) > 2)) {
+		g_object_unref(job->image2);
+	}
+}
+
+/* wait for a free job, runs in main thread */
+int jobs_wait(struct job jobs[], int num)
+{
+	int i;
+
+	while(1) {
+		for(i = 0; i < num; i++) {
+			if (work_finished == jobs[i].work) {
+				if (jobs[i].id) {
+					jobs_end(&jobs[i]);
+				}
+				return i;
+			}
+		}
+		sleep(1); /* wait a bit to give threads more time to finish */
+	}
+	return -1; /* never reached */
+}
+
+/* start a new thread, runs in main thread */
+void jobs_new(struct job *jobs, int threads, work_t work, int z, VipsImage *image1, VipsImage *image2, uint8_t *refcnt1, uint8_t *refcnt2)
+{
+	int j;
+
+	j = jobs_wait(jobs, threads);
+	jobs[j].work = work;
+	jobs[j].object = resize(NULL, 10);
+	jobs[j].z = z;
+	jobs[j].image1 = image1;
+	jobs[j].image2 = image2;
+	jobs[j].refcnt1 = refcnt1;
+	jobs[j].refcnt2 = refcnt2;
+	jobs[j].id = vips_g_thread_new("imgseq2stl", &jobs_worker, &jobs[j]);
+}
+
 int main(int argc, char *argv[])
 {
 	struct option longoptions[] = {
@@ -475,19 +586,24 @@ int main(int argc, char *argv[])
 		{ "output", 1, NULL, 'o' },
 		{ "first", 1, NULL, 'f' },
 		{ "last", 1, NULL, 'l' },
+		{ "threads", 1, NULL, 't' },
 		{ 0, 0, 0, 0 }
 	};
 	char para_input[80];
 	char para_output[80];
 	int para_first = 0;
 	int para_last = 0;
-	struct object *object = NULL;
+	int para_threads = 1;
 	VipsImage *image1 = NULL;
 	VipsImage *image2 = NULL;
+	uint8_t *imgrefcnts = NULL; /* use counters for VipsImages, only used in main thread */
 	int z;
 	char s[80];
 	FILE *file;
+	struct job *jobs;
+	int i;
 
+	s[0] = 0;
 	/* parameter parsing */
 	para_input[0] = 0;
 	para_output[0] = 0;
@@ -508,6 +624,9 @@ int main(int argc, char *argv[])
 			case 'l':
 				para_last = strtol(optarg, NULL, 0);
 				break;
+			case 't':
+				para_threads = strtol(optarg, NULL, 0);
+				break;
 		}
 	}
 	/* sanity checks */
@@ -518,50 +637,75 @@ int main(int argc, char *argv[])
 		if (para_last <= para_first) { fprintf(stderr, "--last must be > --first\n"); abort = 1; }
 		if (0 == strlen(para_input)) { fprintf(stderr, "--input must be set\n"); abort = 1; }
 		if (0 == strlen(para_output)) { fprintf(stderr, "--output must be set\n"); abort = 1; }
+		if (para_threads < 1) { fprintf(stderr, "--threads must be >= 1\n"); abort = 1; }
+		if (para_threads > 200) { fprintf(stderr, "--threads must be <= 200\n"); abort = 1; }
 		if (abort) exit(1);
 	}
 
 	if (VIPS_INIT (argv[0])) vips_error_exit("unable to start VIPS");
 
+	/* allocate worker threads */
+	jobs = calloc(para_threads, sizeof(struct job));
+	if (NULL == jobs) {
+		fprintf(stderr, "Can't allocate jobs\n");
+		exit(1);
+	}
+
+	/* allocate reference counters for VipsImages */
+	imgrefcnts = calloc(para_last - para_first + 1, 1);
+	if (NULL == imgrefcnts) {
+		fprintf(stderr, "Can't allocate imgrefcnt\n");
+		exit(1);
+	}
+
+	/* output file */
 	file = fopen(para_output, "w");
 	if (NULL == file) {
 		fprintf(stderr, "Can't open output file for write\n");
 		exit(1);
 	}
 
-	object = resize(NULL, 10);
+	/* allocate space for final object */
+	Fractal = resize(NULL, 1024*1024);
 
 	for(z = para_first; z <= para_last; z++) {
 		fprintf(stderr, "\rWorking on layer %d", z); fflush(stderr);
 		snprintf(s, sizeof(s), para_input, z);
 		image1 = vips_image_new_from_file(s, NULL);
-		if (NULL == image1) vips_error_exit("Can't load file");
+		if (NULL == image1) vips_error_exit("Can't load file '%s'", s);
 		if (z == para_first) {
 			/* first layer needs to have bottom added */
-			object = addbottom(object, image1, z);
+			Fractal = addbottom(Fractal, image1, z);
+			imgrefcnts[z - para_first]++;
 		} else {
 			/* rest of the layers need z added */
-			object = addz(object, image2, image1, z);
-			g_object_unref(image2);
+			jobs_new(jobs, para_threads, work_z, z, image1, image2, &imgrefcnts[z - para_first], &imgrefcnts[z - para_first - 1]);
 		}
-		object = addfront(object, image1, z);
-		object = addback(object, image1, z);
-		object = addx(object, image1, z);
-		object = addleft(object, image1, z);
-		object = addright(object, image1, z);
-		object = addy(object, image1, z);
+		/* combine all jobs which need only one image */
+		jobs_new(jobs, para_threads, work_fblrxy, z, image1, NULL, &imgrefcnts[z - para_first], NULL);
 		image2 = image1;
 		if (z == para_last) {
 			/* last layer needs top added */
-			object = addtop(object, image1, z);
-			g_object_unref(image1);
+			Fractal = addtop(Fractal, image1, z);
+			imgrefcnts[z - para_first]++;
+		}
+	}
+	/* wait for all threads to end and collect results */
+	for(i = 0; i < para_threads; i++) {
+		if (jobs[i].id) {
+			jobs_end(&jobs[i]);
 		}
 	}
 	fprintf(stderr, "\r                             \r"); fflush(stderr);
 
 	fprintf(file, "solid %s\n", para_output);
-	dumptriangles_ascii(file, object->triangles, object->size);
+	dumptriangles_ascii(file, Fractal->triangles, Fractal->size);
 	fprintf(file, "endsolid %s\n", para_output);
+
+	/* sanity checking VipsImage use counters */
+	for(i = 0; i < (para_last - para_first + 1); i++) {
+		if (imgrefcnts[i] != 3) fprintf(stderr, "refcnt %d %d\n", i, imgrefcnts[i]);
+	}
 
 	vips_shutdown();
 	return 0;
