@@ -11,13 +11,19 @@ printing.
 ## Usage
 
 ```
-imgseq2stl --input <imgpattern> --outout <stlfilename> --first <a> --last <b>
+imgseq2stl --input <imgpattern> --outout <stlfilename> --first <a> --last <b> --threads <t>
 
 <imgpattern>  printf pattern for the input file, like "f-%06d.gif"
 <stlfilename> file name for the output file
 <a>           Number of first image to use
 <b>           Number of last image to use
+<t>           The number of threads to use
 ```
+
+The multi-threading implementation is not very good at keeping all the threads
+running and busy, a good value is 20% more than CPU cores available, so on a
+4 core CPU with hyperthreading try --threads 10.
+
 ## Useful helper programs
 
 These are some very simple programs, they contain no error checking and should
@@ -35,4 +41,8 @@ you can scale it with `rescale.pl --xscale <x> --yscale <y> --zscale <z>` where
 x, y and z are dividers for the 3 axes.
 
 ## History
-RELEASE_2018_12_26 Initial release
+### RELEASE_2019_01_28 Added --threads
+This version supports multi-threading using the --threads parameter.
+
+### RELEASE_2018_12_26 Initial release
+This is the first version release on github.
