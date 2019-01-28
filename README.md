@@ -33,3 +33,6 @@ The imgseq2stl makes every pixel 1 cubic millimeter big. So if you use 4kx4k
 pixels as image size the object is 4m wide and deep. To make that 3D printable
 you can scale it with `rescale.pl --xscale <x> --yscale <y> --zscale <z>` where
 x, y and z are dividers for the 3 axes.
+
+## History
+RELEASE_2018_12_26 Initial release
