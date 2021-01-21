@@ -41,6 +41,10 @@ you can scale it with `rescale.pl --xscale <x> --yscale <y> --zscale <z>` where
 x, y and z are dividers for the 3 axes.
 
 ## History
+### RELEASE_2021_01_21 Fixed regex for y and z in perl scripts.
+Due to a typo the boundingbox.pl and rescale.pl perl scripts only supported
+integer numbers for Y and Z coordinates.
+
 ### RELEASE_2019_01_28 Added --threads
 This version supports multi-threading using the --threads parameter.
 
