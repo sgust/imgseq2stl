@@ -10,7 +10,7 @@ my $zscale = 2000/50;
 GetOptions ('xscale=f' => \$xscale, 'yscale=f' => \$yscale, 'zscale=f' => \$zscale);
 
 while(<>) {
-	if (/vertex\s+([0-9.efEF]+)\s+([0-9efEF]+)\s+([0-9efEF]+)/) {
+	if (/vertex\s+([0-9.efEF]+)\s+([0-9.efEF]+)\s+([0-9.efEF]+)/) {
 		print "vertex ", $1/$xscale, " ", $2/$yscale, " ", $3/$zscale, "\n";
 	} else {
 		print $_;

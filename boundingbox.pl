@@ -11,7 +11,7 @@ my $ymax = -1;
 my $zmax = -1;
 
 while(<>) {
-	if (/vertex\s+([0-9.efEF]+)\s+([0-9efEF]+)\s+([0-9efEF]+)/) {
+	if (/vertex\s+([0-9.efEF]+)\s+([0-9.efEF]+)\s+([0-9.efEF]+)/) {
 		if ($1 < $xmin) { $xmin = $1; }
 		if ($2 < $ymin) { $ymin = $2; }
 		if ($3 < $zmin) { $zmin = $3; }
